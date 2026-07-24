@@ -72,6 +72,7 @@ def test_favorites_list_success(mock_auth_cls, mock_platform_cls):
 	assert item["salary"] == "25-40K"
 	assert item["source"] == "favorites"
 	assert parsed["pagination"]["has_more"] is False
+	platform.job_favorites.assert_called_once_with(page=1, tag=4, is_active=True)
 
 
 @patch("boss_agent_cli.commands.favorites.get_platform_instance")
