@@ -95,6 +95,7 @@ _CANDIDATE_COMMANDS = {
 	"follow-up",
 	"apply",
 	"shortlist",
+	"favorites",
 	"digest",
 	"stats",
 	"resume",
@@ -279,7 +280,7 @@ def _format_mcp_tools(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 SCHEMA_DATA = {
 	"name": "boss-agent-cli",
-	"description": "BOSS直聘本地辅助工具，共 37 个顶层命令。默认低风险模式聚焦只读、本地辅助、用户主动触发；自动触达、批量操作和候选人个人信息处理默认受限。",
+	"description": "BOSS直聘本地辅助工具，共 38 个顶层命令。默认低风险模式聚焦只读、本地辅助、用户主动触发；自动触达、批量操作和候选人个人信息处理默认受限。",
 	"commands": {
 		"login": {
 			"description": "按当前平台登录（zhipin / zhilian）。默认低风险模式仅用于用户主动触发的本地辅助与只读命令，不用于规避平台风控。",
@@ -874,6 +875,23 @@ SCHEMA_DATA = {
 				"annotate": "更新候选职位的本地标签和备注",
 				"compare": "本地对比候选职位，可按标签过滤",
 				"remove": "从本地候选池移除职位",
+			},
+		},
+		"favorites": {
+			"description": "读取 BOSS 职位收藏并同步到本地候选池（子命令：list/sync）。list 远端只读预览，sync 远端只读拉取后写入本地 shortlist（upsert）；默认低风险、用户主动触发。",
+			"args": [],
+			"options": {
+				"list": {
+					"--page": {"type": "int", "default": 1, "description": "页码"},
+					"--tag": {"type": "int", "default": 4, "description": "收藏类型，4=职位收藏"},
+				},
+				"sync": {
+					"--tag": {"type": "int", "default": 4, "description": "收藏类型，4=职位收藏"},
+				},
+			},
+			"subcommands": {
+				"list": "预览职位收藏单页（不落库）",
+				"sync": "同步全部职位收藏到本地候选池（远端只读拉取，本地 upsert；已存在跳过，保留首次收藏时间）",
 			},
 		},
 		"digest": {

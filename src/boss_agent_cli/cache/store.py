@@ -579,6 +579,59 @@ class CacheStore:
 		)
 		self._conn.commit()
 
+	def add_shortlist_batch(self, items: list[dict[str, Any]], source: str = "favorites") -> dict[str, int]:
+		"""批量导入候选池：按 job_id 去重，已存在则跳过（保留 created_at），缺主键则跳过。
+
+		securityId 每次请求重新生成（实测 C3：同职位两次请求 sid 全不同），不能作去重键；
+		encryptJobId（job_id）跨请求稳定，故按 job_id 去重——预查已存在的 job_id 集合，
+		已存在则跳过，新 job_id 才 INSERT。批次内同 job_id 也防重复（existing_job_ids.add）。
+		`with self._conn:` 上下文保证中途异常自动回滚（deferred 隔离下避免部分批次
+		被下一次 commit 连带提交）。返回 {imported_count, existing_count, skipped_count}。
+		"""
+		imported_count = 0
+		existing_count = 0
+		skipped_count = 0
+		with self._conn:
+			existing_job_ids: set[str] = {
+				str(row[0])
+				for row in self._conn.execute(
+					"SELECT job_id FROM shortlist_records WHERE job_id != ''"
+				).fetchall()
+			}
+			for item in items:
+				security_id = str(item.get("security_id", ""))
+				job_id = str(item.get("job_id", ""))
+				if not security_id or not job_id:
+					skipped_count += 1
+					continue
+				if job_id in existing_job_ids:
+					existing_count += 1
+					continue
+				self._conn.execute(
+					"INSERT OR IGNORE INTO shortlist_records "
+					"(security_id, job_id, title, company, city, salary, source, tags, note, created_at) "
+					"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					(
+						security_id,
+						job_id,
+						str(item.get("title", "") or ""),
+						str(item.get("company", "") or ""),
+						str(item.get("city", "") or ""),
+						str(item.get("salary", "") or ""),
+						item.get("source") or source,
+						self._serialize_shortlist_tags(item.get("tags", [])),
+						str(item.get("note", "") or ""),
+						time.time(),
+					),
+				)
+				imported_count += 1
+				existing_job_ids.add(job_id)
+		return {
+			"imported_count": imported_count,
+			"existing_count": existing_count,
+			"skipped_count": skipped_count,
+		}
+
 	def list_shortlist(self) -> list[dict[str, Any]]:
 		rows = self._conn.execute(
 			"SELECT security_id, job_id, title, company, city, salary, source, tags, note, created_at "
