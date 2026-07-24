@@ -883,15 +883,12 @@ SCHEMA_DATA = {
 			"options": {
 				"list": {
 					"--page": {"type": "int", "default": 1, "description": "页码"},
-					"--tag": {"type": "int", "default": 4, "description": "收藏类型，4=职位收藏"},
 				},
-				"sync": {
-					"--tag": {"type": "int", "default": 4, "description": "收藏类型，4=职位收藏"},
-				},
+				"sync": {},
 			},
 			"subcommands": {
 				"list": "预览职位收藏单页（不落库）",
-				"sync": "同步全部职位收藏到本地候选池（远端只读拉取，本地 upsert；已存在跳过，保留首次收藏时间）",
+				"sync": "同步全部职位收藏到本地候选池（远端只读拉取，本地 upsert；刷新动态访问 ID 并保留首次收藏时间）",
 			},
 		},
 		"digest": {
@@ -1089,6 +1086,11 @@ SCHEMA_DATA = {
 			"message": "请求频率过高",
 			"recoverable": True,
 			"recovery_action": "等待后重试",
+		},
+		"RESULT_LIMIT_REACHED": {
+			"message": "结果超过安全处理上限",
+			"recoverable": True,
+			"recovery_action": "缩小结果范围后重试",
 		},
 		"TOKEN_REFRESH_FAILED": {
 			"message": "Token 刷新失败",

@@ -6,6 +6,7 @@
 import json
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from boss_agent_cli.main import cli
@@ -279,7 +280,70 @@ def test_favorites_sync_sid_changed_still_skipped(mock_auth_cls, mock_platform_c
 	# job_a 已存在 → 跳过，不重复导入（按 job_id 去重，而非不稳的 sid）
 	assert parsed["data"]["imported_count"] == 0
 	assert parsed["data"]["existing_count"] == 1
-	assert len(_shortlist_items(tmp_path)) == 1
+	items = _shortlist_items(tmp_path)
+	assert len(items) == 1
+	assert items[0]["security_id"] == "sec_v2"
+
+
+@patch("boss_agent_cli.commands.favorites.get_platform_instance")
+@patch("boss_agent_cli.commands.favorites.AuthManager")
+def test_favorites_sync_null_identifiers_are_skipped(mock_auth_cls, mock_platform_cls, tmp_path):
+	platform = _ctx_mock(mock_platform_cls)
+	platform.job_favorites.return_value = {
+		"code": 0,
+		"zpData": {
+			"cardList": [
+				_make_card(sid=None, jid="job_a"),
+				_make_card(sid="sec_b", jid=None),
+			],
+			"hasMore": False,
+		},
+	}
+	result = CliRunner().invoke(cli, ["--data-dir", str(tmp_path), "--json", "favorites", "sync"])
+	assert result.exit_code == 0
+	parsed = json.loads(result.output)
+	assert parsed["data"] == {"imported_count": 0, "existing_count": 0, "skipped_count": 2}
+	assert _shortlist_items(tmp_path) == []
+
+
+def test_collect_favorites_rejects_incomplete_page_budget():
+	from unittest.mock import MagicMock
+
+	from boss_agent_cli.commands.favorites import FavoritesPageLimitExceeded, collect_favorites_items
+
+	platform = MagicMock()
+	platform.is_success.return_value = True
+	platform.unwrap_data.side_effect = lambda response: response["zpData"]
+	platform.job_favorites.side_effect = [
+		{"code": 0, "zpData": {"cardList": [_make_card(jid="job_1")], "hasMore": True}},
+		{"code": 0, "zpData": {"cardList": [_make_card(jid="job_2")], "hasMore": True}},
+	]
+	with pytest.raises(FavoritesPageLimitExceeded):
+		collect_favorites_items(platform, max_pages=2)
+
+
+@patch("boss_agent_cli.commands.favorites.collect_favorites_items")
+@patch("boss_agent_cli.commands.favorites.get_platform_instance")
+@patch("boss_agent_cli.commands.favorites.AuthManager")
+def test_favorites_sync_page_limit_returns_error(mock_auth_cls, mock_platform_cls, mock_collect, tmp_path):
+	from boss_agent_cli.commands.favorites import FavoritesPageLimitExceeded
+
+	_ctx_mock(mock_platform_cls)
+	mock_collect.side_effect = FavoritesPageLimitExceeded("超过安全分页上限")
+	result = CliRunner().invoke(cli, ["--data-dir", str(tmp_path), "--json", "favorites", "sync"])
+	assert result.exit_code == 1
+	parsed = json.loads(result.output)
+	assert parsed["error"]["code"] == "RESULT_LIMIT_REACHED"
+	assert parsed["error"]["recoverable"] is True
+	assert _shortlist_items(tmp_path) == []
+
+
+def test_favorites_public_commands_do_not_expose_tag_override():
+	runner = CliRunner()
+	for command in (["favorites", "list", "--help"], ["favorites", "sync", "--help"]):
+		result = runner.invoke(cli, command)
+		assert result.exit_code == 0
+		assert "--tag" not in result.output
 
 
 @patch("boss_agent_cli.commands.favorites.get_platform_instance")
@@ -358,3 +422,6 @@ def test_favorites_fixture_drives_card_mapping():
 	assert item["salary"] == "12-24K"
 	assert item["city"] == "北京"
 	assert item["source"] == "favorites"
+
+	card["jobLabels"] = "not-a-list"
+	assert _card_to_shortlist_item(card)["tags"] == []

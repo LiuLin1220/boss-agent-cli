@@ -92,7 +92,7 @@ boss crawl stop <run_id>
 | `boss digest` | 受限：默认低风险模式阻断，依赖会话/面试数据 |
 | `boss watch add/list/remove/run` | add/list/remove 为本地预设；run 默认阻断，避免自动增量拉取平台数据 |
 | `boss shortlist add/list/annotate/compare/remove` | 本地候选池：支持标签、备注和离线对比 |
-| `boss favorites list/sync` | 读取 BOSS 职位收藏并同步到本地候选池（已存在跳过，保留首次收藏时间） |
+| `boss favorites list/sync` | 读取 BOSS 职位收藏并同步到本地候选池（按职位去重、刷新动态访问 ID，保留首次收藏时间） |
 | `boss preset add/list/remove` | 搜索预设 |
 
 ## 招聘者模式

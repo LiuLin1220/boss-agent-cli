@@ -1,5 +1,6 @@
-import click
 from typing import Any
+
+import click
 
 from boss_agent_cli.auth.manager import AuthManager
 from boss_agent_cli.cache.store import CacheStore
@@ -7,6 +8,7 @@ from boss_agent_cli.commands._platform import get_platform_instance
 from boss_agent_cli.display import (
 	boss_command_for_ctx,
 	handle_auth_errors,
+	handle_error_output,
 	handle_not_supported,
 	handle_output,
 	handle_platform_error_output,
@@ -14,6 +16,11 @@ from boss_agent_cli.display import (
 )
 
 MAX_FAVORITES_PAGES = 50
+FAVORITES_TAG = 4
+
+
+class FavoritesPageLimitExceeded(RuntimeError):
+	"""The remote list still has more data after the bounded page budget."""
 
 
 def _card_to_shortlist_item(card: dict[str, Any]) -> dict[str, Any]:
@@ -22,15 +29,16 @@ def _card_to_shortlist_item(card: dict[str, Any]) -> dict[str, Any]:
 	字段名以 mitmproxy 实测为准（securityId/encryptJobId/jobName/brandName/cityName/jobSalary）。
 	NOT NULL 字段（title/company/city/salary）兜底空串，防脏 card 触发 IntegrityError。
 	"""
+	labels = card.get("jobLabels")
 	return {
-		"security_id": str(card.get("securityId", "")),
-		"job_id": str(card.get("encryptJobId", "")),
+		"security_id": str(card.get("securityId") or ""),
+		"job_id": str(card.get("encryptJobId") or ""),
 		"title": str(card.get("jobName", "") or ""),
 		"company": str(card.get("brandName", "") or ""),
 		"city": str(card.get("cityName", "") or ""),
 		"salary": str(card.get("jobSalary", "") or ""),
 		"source": "favorites",
-		"tags": list(card.get("jobLabels") or []),
+		"tags": list(labels) if isinstance(labels, list) else [],
 		"note": "",
 	}
 
@@ -50,7 +58,6 @@ def _redact_for_display(item: dict[str, Any]) -> dict[str, Any]:
 def collect_favorites_items(
 	platform: Any,
 	*,
-	tag: int = 4,
 	max_pages: int = MAX_FAVORITES_PAGES,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
 	"""安全聚合多页职位收藏，保留原始顺序。
@@ -67,12 +74,16 @@ def collect_favorites_items(
 	seen_signatures: set[tuple[str, ...]] = set()
 
 	for _ in range(max_pages):
-		resp = platform.job_favorites(page=page, tag=tag, is_active=True)
+		resp = platform.job_favorites(page=page, tag=FAVORITES_TAG, is_active=True)
 		if not platform.is_success(resp):
 			return [], resp
 
 		platform_data = platform.unwrap_data(resp) or {}
+		if not isinstance(platform_data, dict):
+			return [], resp
 		page_items = platform_data.get("cardList") or []
+		if not isinstance(page_items, list):
+			return [], resp
 		if not page_items:
 			break
 
@@ -85,6 +96,10 @@ def collect_favorites_items(
 		if platform_data.get("hasMore") is False:
 			break
 		page += 1
+	else:
+		raise FavoritesPageLimitExceeded(
+			f"职位收藏超过安全分页上限 {max_pages} 页，未写入不完整结果"
+		)
 
 	return items, None
 
@@ -95,11 +110,10 @@ def favorites_group() -> None:
 
 
 @favorites_group.command("list")
-@click.option("--page", default=1, help="页码")
-@click.option("--tag", default=4, help="收藏类型，4=职位收藏")
+@click.option("--page", default=1, type=click.IntRange(1), show_default=True, help="页码")
 @click.pass_context
 @handle_auth_errors("favorites-list")
-def favorites_list_cmd(ctx: click.Context, page: int, tag: int) -> None:
+def favorites_list_cmd(ctx: click.Context, page: int) -> None:
 	"""预览职位收藏单页（不落库）。
 
 	security_id/job_id 脱敏为 [REDACTED]（遵循导出脱敏约定）；终端表格不显示这两个 ID。
@@ -112,7 +126,7 @@ def favorites_list_cmd(ctx: click.Context, page: int, tag: int) -> None:
 	auth = AuthManager(data_dir, logger=logger, platform=ctx.obj.get("platform", "zhipin"))
 	with get_platform_instance(ctx, auth) as platform:
 		try:
-			raw = platform.job_favorites(page=page, tag=tag, is_active=True)
+			raw = platform.job_favorites(page=page, tag=FAVORITES_TAG, is_active=True)
 		except NotImplementedError as exc:
 			handle_not_supported(ctx, "favorites-list", exc, fallback_message="当前平台不支持职位收藏")
 			return
@@ -123,7 +137,19 @@ def favorites_list_cmd(ctx: click.Context, page: int, tag: int) -> None:
 			)
 			return
 		platform_data = platform.unwrap_data(raw) or {}
+		if not isinstance(platform_data, dict):
+			handle_platform_error_output(
+				ctx, "favorites-list", platform, raw,
+				fallback_message="职位收藏响应格式无效",
+			)
+			return
 		cards = platform_data.get("cardList") or []
+		if not isinstance(cards, list):
+			handle_platform_error_output(
+				ctx, "favorites-list", platform, raw,
+				fallback_message="职位收藏响应格式无效",
+			)
+			return
 
 	items = [_redact_for_display(_card_to_shortlist_item(card)) for card in cards if isinstance(card, dict)]
 
@@ -157,20 +183,29 @@ def favorites_list_cmd(ctx: click.Context, page: int, tag: int) -> None:
 
 
 @favorites_group.command("sync")
-@click.option("--tag", default=4, help="收藏类型，4=职位收藏")
 @click.pass_context
 @handle_auth_errors("favorites-sync")
-def favorites_sync_cmd(ctx: click.Context, tag: int) -> None:
-	"""同步全部职位收藏到本地候选池（远端只读拉取，本地 upsert；已存在跳过，保留首次收藏时间）。"""
+def favorites_sync_cmd(ctx: click.Context) -> None:
+	"""同步全部职位收藏到本地候选池（远端只读，本地 upsert 并刷新访问 ID）。"""
 	data_dir = ctx.obj["data_dir"]
 	logger = ctx.obj["logger"]
 
 	auth = AuthManager(data_dir, logger=logger, platform=ctx.obj.get("platform", "zhipin"))
 	with get_platform_instance(ctx, auth) as platform:
 		try:
-			cards, error_response = collect_favorites_items(platform, tag=tag)
+			cards, error_response = collect_favorites_items(platform)
 		except NotImplementedError as exc:
 			handle_not_supported(ctx, "favorites-sync", exc, fallback_message="当前平台不支持职位收藏")
+			return
+		except FavoritesPageLimitExceeded as exc:
+			handle_error_output(
+				ctx,
+				"favorites-sync",
+				code="RESULT_LIMIT_REACHED",
+				message=str(exc),
+				recoverable=True,
+				recovery_action="缩小远端收藏数量后重试",
+			)
 			return
 		if error_response is not None:
 			handle_platform_error_output(

@@ -94,7 +94,7 @@ After every page, `<data-dir>/crawl/runs/<run_id>/jobs.json`, `jobs.csv`, and a 
 | `boss pipeline` / `boss follow-up` / `boss digest` | Restricted: blocked by default (depend on session/interview data) |
 | `boss watch add/list/remove/run` | add/list/remove manage local presets; run is blocked by default (avoids automated incremental pulls) |
 | `boss shortlist add/list/annotate/compare/remove` | Local shortlist with tags, notes, and offline compare |
-| `boss favorites list/sync` | Read BOSS job favorites and sync to local shortlist (skips existing, preserves first-saved time) |
+| `boss favorites list/sync` | Read BOSS job favorites and sync to local shortlist (deduplicates jobs, refreshes dynamic access IDs, preserves first-saved time) |
 | `boss preset add/list/remove` | Search presets |
 
 ## Recruiter mode

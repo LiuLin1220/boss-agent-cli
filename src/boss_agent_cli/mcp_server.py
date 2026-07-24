@@ -707,7 +707,6 @@ TOOLS = [
 			"type": "object",
 			"properties": {
 				"page": {"type": "int", "description": "页码"},
-				"tag": {"type": "int", "description": "收藏类型，4=职位收藏"},
 			},
 			"required": [],
 		},
@@ -1294,8 +1293,6 @@ def _build_args(tool_name: str, arguments: dict) -> list[str]:
 		args = ["favorites", "list"]
 		if arguments.get("page"):
 			args.extend(["--page", str(arguments["page"])])
-		if arguments.get("tag"):
-			args.extend(["--tag", str(arguments["tag"])])
 		return args
 
 	if name == "shortlist_add":
