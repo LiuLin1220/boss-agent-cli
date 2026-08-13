@@ -6,25 +6,31 @@ import sys
 
 
 def test_tools_list_is_registered_over_stdio() -> None:
-	messages = [
-		{
-			"jsonrpc": "2.0",
-			"id": 1,
-			"method": "initialize",
-			"params": {
-				"protocolVersion": "2024-11-05",
-				"capabilities": {},
-				"clientInfo": {"name": "pytest", "version": "1.0"},
-			},
-		},
-		{"jsonrpc": "2.0", "method": "notifications/initialized"},
-		{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-	]
-	request_stream = "".join(json.dumps(message, separators=(",", ":")) + "\n" for message in messages)
+	probe = """
+import asyncio
+import json
+import sys
 
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def main():
+	server = StdioServerParameters(command=sys.executable, args=["-m", "boss_agent_cli.mcp_server"])
+	async with stdio_client(server) as (read_stream, write_stream):
+		async with ClientSession(read_stream, write_stream) as session:
+			initialization = await session.initialize()
+			tool_list = await session.list_tools()
+			print(json.dumps({
+				"server_name": initialization.serverInfo.name,
+				"tool_names": [tool.name for tool in tool_list.tools],
+			}))
+
+
+asyncio.run(main())
+"""
 	result = subprocess.run(
-		[sys.executable, "-m", "boss_agent_cli.mcp_server"],
-		input=request_stream,
+		[sys.executable, "-c", probe],
 		capture_output=True,
 		text=True,
 		encoding="utf-8",
@@ -32,11 +38,7 @@ def test_tools_list_is_registered_over_stdio() -> None:
 	)
 
 	assert result.returncode == 0, result.stderr
-	responses = {response["id"]: response for line in result.stdout.splitlines() if (response := json.loads(line))}
-	assert responses[1]["result"]["serverInfo"]["name"] == "boss-agent-cli"
-
-	list_response = responses[2]
-	assert "error" not in list_response, list_response
-	tools = list_response["result"]["tools"]
-	assert tools
-	assert "boss_status" in {tool["name"] for tool in tools}
+	response = json.loads(result.stdout)
+	assert response["server_name"] == "boss-agent-cli"
+	assert response["tool_names"]
+	assert "boss_status" in response["tool_names"]
