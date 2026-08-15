@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 修复 BOSS 收藏接口在 `isActive=true` 下仍混入失效职位时的静默误判：`favorites list` 现输出规范化 `job_status` 与状态计数，`favorites sync` 仅导入明确有效职位并报告 active/inactive/unknown 数量；缺失或未知状态不再默认有效。
+
 ## [1.18.0] - 2026-07-29
 
 ### Added
