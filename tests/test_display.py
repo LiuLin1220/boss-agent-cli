@@ -666,3 +666,137 @@ class TestRenderOperatorActions:
 		output = stream.getvalue()
 		assert "确认二维码已完成扫码" in output
 		assert "boss login --timeout 180" not in output
+
+
+# ── 真人链路：下一步提示与动作确认渲染 ──────────────────────────
+
+
+class TestRenderNextSteps:
+	def test_renders_each_action(self, monkeypatch):
+		from boss_agent_cli.display import render_next_steps
+
+		stream = _capture_display_console(monkeypatch)
+		render_next_steps(["boss resume show x", "boss resume list"])
+		out = stream.getvalue()
+
+		assert "boss resume show x" in out
+		assert "boss resume list" in out
+		assert "下一步" in out
+
+	def test_empty_actions_render_nothing(self, monkeypatch):
+		from boss_agent_cli.display import render_next_steps
+
+		stream = _capture_display_console(monkeypatch)
+		render_next_steps([])
+
+		assert stream.getvalue() == ""
+
+	def test_none_renders_nothing(self, monkeypatch):
+		from boss_agent_cli.display import render_next_steps
+
+		stream = _capture_display_console(monkeypatch)
+		render_next_steps(None)
+
+		assert stream.getvalue() == ""
+
+
+class TestRenderActionResult:
+	def test_shows_fields_and_next_steps(self, monkeypatch):
+		from boss_agent_cli.display import render_action_result
+
+		stream = _capture_display_console(monkeypatch)
+		render_action_result(
+			{"action": "init", "name": "我的简历", "template": "default"},
+			title="resume",
+			next_steps=["boss resume show 我的简历"],
+		)
+		out = stream.getvalue()
+
+		assert "init" in out
+		assert "我的简历" in out
+		assert "boss resume show" in out
+		assert "{" not in out, "不应回显 JSON"
+
+	def test_works_without_next_steps(self, monkeypatch):
+		from boss_agent_cli.display import render_action_result
+
+		stream = _capture_display_console(monkeypatch)
+		render_action_result({"action": "remove", "name": "x", "removed": True}, title="preset")
+		out = stream.getvalue()
+
+		assert "remove" in out
+		assert "下一步" not in out
+
+
+class TestRenderListWithSteps:
+	def test_empty_list_still_gives_next_step(self, monkeypatch):
+		"""空列表必须给出可执行的下一步，而不是只说 no xxx（AC4）。"""
+		from boss_agent_cli.display import render_list_result
+
+		stream = _capture_display_console(monkeypatch)
+		render_list_result([], "resumes", [("name", "name", "cyan")], next_steps=["boss resume init"])
+		out = stream.getvalue()
+
+		assert "boss resume init" in out
+
+	def test_non_empty_list_renders_rows(self, monkeypatch):
+		from boss_agent_cli.display import render_list_result
+
+		stream = _capture_display_console(monkeypatch)
+		render_list_result(
+			[{"name": "简历A"}, {"name": "简历B"}],
+			"resumes",
+			[("name", "name", "cyan")],
+			next_steps=[],
+		)
+		out = stream.getvalue()
+
+		assert "简历A" in out and "简历B" in out
+
+
+class TestRenderAiResult:
+	def test_renders_scalar_and_list_values(self, monkeypatch):
+		from boss_agent_cli.display import render_ai_result
+
+		stream = _capture_display_console(monkeypatch)
+		render_ai_result(
+			{"匹配度": "85分", "优势": ["Go 经验充足", "分布式背景"], "建议": {"简历": "补充量化指标"}},
+			title="ai fit",
+		)
+		out = stream.getvalue()
+
+		assert "85分" in out
+		assert "Go 经验充足" in out
+		assert "分布式背景" in out
+		assert "补充量化指标" in out
+
+	def test_does_not_truncate_long_text(self, monkeypatch):
+		"""AI 长文本（润色后的简历等）不得被截断。"""
+		from boss_agent_cli.display import render_ai_result
+
+		unit = "补充项目量化指标。"
+		long_text = "优化建议：" + unit * 40
+		stream = _capture_display_console(monkeypatch)
+		render_ai_result({"内容": long_text}, title="ai polish")
+		# Panel 会给每行加 │ 边框并按宽度换行，比对前先去掉边框与空白
+		out = stream.getvalue().replace("│", "").replace("\n", "").replace(" ", "")
+
+		assert out.count(unit) == 40, f"长文本被截断，仅剩 {out.count(unit)} 段"
+
+	def test_escapes_rich_markup_from_ai_output(self, monkeypatch):
+		"""AI 输出里的方括号不得被当成 Rich 标记解析。"""
+		from boss_agent_cli.display import render_ai_result
+
+		stream = _capture_display_console(monkeypatch)
+		render_ai_result({"建议": "把 [bold]重点[/bold] 写在前面"}, title="ai suggest")
+		out = stream.getvalue()
+
+		assert "[bold]" in out, "方括号应原样显示而不是被解析成样式"
+
+	def test_renders_next_steps(self, monkeypatch):
+		from boss_agent_cli.display import render_ai_result
+
+		stream = _capture_display_console(monkeypatch)
+		render_ai_result({"x": "y"}, title="ai", next_steps=["boss ai optimize <name>"])
+
+		assert "boss ai optimize" in stream.getvalue()

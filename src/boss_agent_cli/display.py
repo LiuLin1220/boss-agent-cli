@@ -6,9 +6,11 @@ Pipe mode (Agent): JSON envelope to stdout.
 """
 
 import sys
+from collections.abc import Sequence
 from typing import Any, Callable
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -363,6 +365,97 @@ def render_export_summary(data: dict[str, Any]) -> None:
 		console.print(f"[green]exported[/green] {count} jobs to [bold]{path}[/bold] ({fmt})")
 	else:
 		console.print(f"[green]exported[/green] {count} jobs ({fmt})")
+
+
+def render_next_steps(actions: "Sequence[str] | None") -> None:
+	"""把「下一步可以敲什么」渲染给真人。
+
+	与 ``render_operator_actions`` 的分工：后者渲染 ``hints.operator_actions``
+	（需要离开终端才能完成的动作，如扫码），由 ``handle_output`` 自动调用；
+	本函数由各命令自己的 renderer 主动调用，把该命令的后继命令提示出来。
+
+	这样既满足「空数据态要给可执行下一步」，又不改变 hints 双通道语义
+	——``next_actions`` 仍然只是 Agent 通道，不会被自动渲染到 TTY。
+	"""
+	if not actions:
+		return
+	console.print("\n  [bold]下一步：[/bold]")
+	for action in actions:
+		console.print(f"    [dim]{action}[/dim]")
+
+
+def render_action_result(
+	data: dict[str, Any],
+	*,
+	title: str,
+	next_steps: "Sequence[str] | None" = None,
+) -> None:
+	"""动作类命令（add / remove / init / export ...）的统一确认渲染。
+
+	替代直接回显 JSON：结果字段走面板，后继命令走 next_steps。
+	"""
+	render_message_panel(data, title=title)
+	render_next_steps(next_steps)
+
+
+def render_list_result(
+	items: list[dict[str, Any]],
+	title: str,
+	columns: list[tuple[str, str, str]],
+	*,
+	next_steps: "Sequence[str] | None" = None,
+) -> None:
+	"""列表类命令的统一渲染：表格 + 下一步；空列表也会给出下一步（AC4）。"""
+	render_simple_list(items, title, columns)
+	render_next_steps(next_steps)
+
+
+def render_record_result(
+	data: dict[str, Any],
+	*,
+	title: str,
+	next_steps: "Sequence[str] | None" = None,
+) -> None:
+	"""多段记录类命令（resume show / export）的统一渲染：分段面板 + 下一步。"""
+	render_sectioned_record(data, title=title)
+	render_next_steps(next_steps)
+
+
+def _ai_value_lines(value: Any) -> list[str]:
+	"""把单个 AI 返回值摊成可打印的行；全部转义，不截断。"""
+	if isinstance(value, list):
+		lines = []
+		for item in value:
+			if isinstance(item, dict):
+				inline = "  ".join(f"{k}={v}" for k, v in item.items())
+				lines.append(f"  · {escape(str(inline))}")
+			else:
+				lines.append(f"  · {escape(str(item))}")
+		return lines
+	if isinstance(value, dict):
+		return [f"  [bold]{escape(str(k))}:[/bold] {escape(str(v))}" for k, v in value.items()]
+	return [f"  {escape(str(value))}"]
+
+
+def render_ai_result(
+	data: dict[str, Any],
+	*,
+	title: str,
+	next_steps: "Sequence[str] | None" = None,
+) -> None:
+	"""AI 命令结果的渲染：键名作小标题，长文本整段展示。
+
+	AI 返回结构由 prompt 决定、跨命令不一致，因此不假设任何具体键名，
+	只按值类型决定呈现方式。所有值经 ``escape`` 处理——AI 输出里的方括号
+	不能被当成 Rich 标记解析。
+	"""
+	body: list[str] = []
+	for key, value in data.items():
+		body.append(f"[bold cyan]{escape(str(key))}[/bold cyan]")
+		body.extend(_ai_value_lines(value))
+		body.append("")
+	console.print(Panel("\n".join(body).rstrip() or "[dim]empty[/dim]", title=title, border_style="magenta"))
+	render_next_steps(next_steps)
 
 
 # ── Auth error decorator ─────────────────────────────────────────────
