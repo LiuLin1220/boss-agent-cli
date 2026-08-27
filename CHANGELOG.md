@@ -5,6 +5,18 @@
 ## [Unreleased]
 
 ### Fixed
+- 修正 CI docker job 的 `tools/list` 断言存在竞态：`printf` 写完三行就关闭 stdin，
+  MCP 服务器可能在回 `tools/list` 之前就因 EOF 退出，读端拿到空串报 `JSONDecodeError`
+  （已在 CI 上真实发生）。改为写完后保持 stdin 一段时间，并按 JSON-RPC `id` 认响应而非
+  依赖行序；`tools/list` 无响应时给出明确断言而不是解析错误。**一道会随机变红的门禁
+  等于没有门禁**——它会挡住无关的合并，正如同批修掉的 PTY 用例那样。
+- 修正 Docs 工作流的 `Check whitespace` 对**落后于 master 的 PR 一律假红**：
+  `git fetch --no-tags --depth=1 origin <base>` 只取到 base 的 tip 并留下浅克隆边界，
+  落后的 PR 分支算不出 merge base，`git diff --check A...B` 直接以
+  `fatal: origin/master...HEAD: no merge base` 退出 128——报出来像空白字符违规，
+  实际是这一步崩了。#382 / #383 / #390 三个外部 PR 的 `docs` 红灯都是这个原因，
+  且恰好是等得最久、落后最多的贡献者最容易撞上，还会被当成他们自己的问题。
+  去掉 `--depth=1` 即可（checkout 已用 `fetch-depth: 0`，这里只是补 `origin/<base>` 引用）。
 - **修复 MCP `tools/list` 从未注册：v1.18.0 的 MCP 入口对任何 host 都不可用。**
   `mcp_server.list_tools` 缺失 `@server.list_tools()` 装饰器，`initialize` 握手正常，但 client
   第一次列工具即 `-32601 Method not found`——73 个工具一个都拿不到。回归由 1.18.0 的
