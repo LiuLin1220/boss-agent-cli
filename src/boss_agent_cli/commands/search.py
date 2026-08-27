@@ -9,6 +9,7 @@ from boss_agent_cli.api.endpoints import (
 from boss_agent_cli.auth.manager import AuthManager
 from boss_agent_cli.cache.store import CacheStore
 from boss_agent_cli.commands._platform import get_platform_instance
+from boss_agent_cli.crawler.service import CrawlBudget
 from boss_agent_cli.display import (
 	SearchProgress,
 	boss_command_for_ctx,
@@ -188,6 +189,7 @@ def search_cmd(
 				return
 
 		auth = AuthManager(data_dir, logger=logger, platform=ctx.obj.get("platform", "zhipin"))
+		request_budget = CrawlBudget(cache) if ctx.obj.get("platform", "zhipin") == "zhipin" else None
 		with get_platform_instance(ctx, auth) as platform:
 			max_pages = 5 if welfare_conditions else 1
 			# TTY 下把管线日志接到 Rich 进度；管道 / --json 仍用原 logger，行为不变。
@@ -216,6 +218,9 @@ def search_cmd(
 						"page": page,
 						"max_pages": max_pages,
 						"welfare_conditions": welfare_conditions,
+						"before_list_request": (
+							(lambda: request_budget.wait("list")) if request_budget is not None else None
+						),
 					},
 					pipeline=run_search_pipeline,
 				)
