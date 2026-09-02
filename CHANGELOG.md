@@ -25,6 +25,12 @@
   本次不暴露任何 CLI 选项、不新增任何错误码。新增 22 条结构门禁锁定上述性质。
 
 ### Fixed
+- 修复 Bridge 已连接日常浏览器时 `chat` / `chatmsg` 仍先要求 CLI 本地 `wt2` 的问题（#386）。
+  Bridge 连接作为本切片的现有浏览器使用信号，走 `existing-browser` 策略的 Bridge → CDP
+  白名单，不读取本地凭据、不新建 context、不启动或降级到 headless；候选耗尽返回
+  `BROWSER_SESSION_NOT_FOUND` + `boss doctor`，真人浏览器指引放在 `operator_actions`。
+  Bridge 未连接时保留原 httpx、stoken 刷新和限流重试语义；本地无凭据仍返回
+  `AUTH_REQUIRED` + `boss login`。中英文风险边界与能力矩阵同步说明：连接存在不等于已验证目标页登录。
 - `boss ai config` 查看与写入现在都回显 `resolved_base_url`（解析后真正生效的端点）。此前查看模式
   直出 `load_config()`，用户只设 `--provider` 时 `ai_base_url` 为空，实际地址来自
   `PROVIDER_BASE_URLS` 查表却从不显示；而 `--provider` 没有 `click.Choice` 校验（自由字符串），

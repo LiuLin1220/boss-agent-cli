@@ -28,6 +28,7 @@ class _StubAuth:
 def _make_client() -> BossClient:
 	"""构建一个 BossClient，mock 掉 _request 和 _browser_request。"""
 	client = BossClient(_StubAuth())
+	client._bridge_is_connected = MagicMock(return_value=False)
 	client._request = MagicMock(return_value={"code": 0, "zpData": {}})
 	client._browser_request = MagicMock(return_value={"code": 0, "zpData": {}})
 	return client
@@ -260,6 +261,21 @@ def test_friend_list_default_and_page():
 	assert call.kwargs["params"] == {"page": 4}
 
 
+def test_friend_list_uses_existing_browser_when_bridge_is_connected():
+	client = _make_client()
+	client._bridge_is_connected.return_value = True
+
+	client.friend_list(page=2)
+
+	client._browser_request.assert_called_once_with(
+		"GET",
+		endpoints.FRIEND_LIST_URL,
+		browser_source="existing-browser",
+		params={"page": 2},
+	)
+	client._request.assert_not_called()
+
+
 def test_interview_data_no_params():
 	client = _make_client()
 	client.interview_data()
@@ -287,6 +303,22 @@ def test_chat_history_custom_pagination():
 	params = client._request.call_args.kwargs["params"]
 	assert params["page"] == 3
 	assert params["c"] == 50
+
+
+def test_chat_history_uses_explicit_non_auto_source_without_bridge_probe():
+	client = BossClient(_StubAuth(), browser_source="existing-browser")
+	client._bridge_is_connected = MagicMock(return_value=False)
+	client._browser_request = MagicMock(return_value={"code": 0, "zpData": {}})
+
+	client.chat_history(gid="g1", security_id="s1")
+
+	client._browser_request.assert_called_once_with(
+		"GET",
+		endpoints.CHAT_HISTORY_URL,
+		browser_source="existing-browser",
+		params={"gid": "g1", "securityId": "s1", "page": 1, "c": 20, "src": 0},
+	)
+	client._bridge_is_connected.assert_not_called()
 
 
 def test_friend_label_add():
@@ -326,6 +358,24 @@ def test_close_is_idempotent():
 	client.close()
 	# 第二次 close 不应抛异常
 	client.close()
+
+
+@patch("boss_agent_cli.api.browser_client.BrowserSession")
+def test_existing_browser_construction_does_not_read_stored_credentials(mock_session_cls):
+	auth = MagicMock()
+	client = BossClient(auth)
+
+	client._get_browser(browser_source="existing-browser")
+
+	auth.get_token.assert_not_called()
+	mock_session_cls.assert_called_once_with(
+		cookies={},
+		user_agent="",
+		delay=(1.5, 3.0),
+		cdp_url=None,
+		logger=auth._logger,
+		browser_source="existing-browser",
+	)
 
 
 def test_context_manager_closes_on_exit():
