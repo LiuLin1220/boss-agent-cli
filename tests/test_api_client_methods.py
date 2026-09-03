@@ -321,6 +321,24 @@ def test_chat_history_uses_explicit_non_auto_source_without_bridge_probe():
 	client._bridge_is_connected.assert_not_called()
 
 
+def test_read_request_without_bridge_and_without_token_raises_auth_required():
+	"""四状态表第 4 行：Bridge 未连接 + 本地无 token → 走 httpx 抛 AuthRequired
+	（信封为 AUTH_REQUIRED + boss login），不得被 BROWSER_SESSION_NOT_FOUND 盖住。"""
+	from boss_agent_cli.auth.manager import AuthRequired
+
+	auth = MagicMock()
+	auth.get_token.side_effect = AuthRequired("未登录，请先执行 boss login")
+	client = BossClient(auth)
+	client._bridge_is_connected = MagicMock(return_value=False)
+	client._browser_request = MagicMock()
+
+	with pytest.raises(AuthRequired):
+		client.friend_list()
+
+	auth.get_token.assert_called_once()
+	client._browser_request.assert_not_called()
+
+
 def test_friend_label_add():
 	client = _make_client()
 	client.friend_label("friend_1", 42)
