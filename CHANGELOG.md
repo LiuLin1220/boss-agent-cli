@@ -4,7 +4,45 @@
 
 ## [Unreleased]
 
+### Fixed
+- **stoken 静默刷新现在遵守 `browser_source` 策略表（Issue #387 seam 收尾）。** #410 把浏览器通道
+  选择收进策略表后，httpx 通道的 stoken 刷新（`_base_client._request` → `AuthManager.force_refresh`）
+  仍绕过策略：`stored-cookie` 下 stoken 过期照样会「CDP 不可用，降级到 headless」，起一个 headless
+  Chromium 带着本地 Cookie 访问平台。现在 `force_refresh` 接收 `browser_source`：fail-closed 来源
+  不再自动探测默认 CDP 端口（没给 `--cdp-url` 直接失败）、CDP 不可用时不再降级 headless，
+  抛带策略错误码（`CDP_UNAVAILABLE`）的 `BrowserSourceUnavailable`；智联显式来源下本地 Cookie 失效时
+  同样 fail-closed，不再打开登录页等扫码。`auto` / 未传参行为逐字不变。该参数尚未暴露到 CLI
+  （由 PR #404 接线），当前只影响程序化调用；信封层把该异常映射为策略错误码的 `display` 分支
+  随 PR #388 落地，在此之前兜底仍为 `NETWORK_ERROR`。
+- 修复 Bridge 已连接日常浏览器时 `chat` / `chatmsg` 仍先要求 CLI 本地 `wt2` 的问题（#386）。
+  Bridge 连接作为本切片的现有浏览器使用信号，走 `existing-browser` 策略的 Bridge → CDP
+  白名单，不读取本地凭据、不新建 context、不启动或降级到 headless；候选耗尽返回
+  `BROWSER_SESSION_NOT_FOUND` + `boss doctor`，真人浏览器指引放在 `operator_actions`。
+  Bridge 未连接时保留原 httpx、stoken 刷新和限流重试语义；本地无凭据仍返回
+  `AUTH_REQUIRED` + `boss login`。中英文风险边界与能力矩阵同步说明：连接存在不等于已验证目标页登录。
+
 ### Changed
+- ROADMAP 中 `BrowserSessionProvider` 条目那句「绝不启动新实例、绝不触发登录、绝不静默回退
+  CDP/headless」按 #387 的决定限定为**仅在显式来源下**成立，`auto` 保持既有降级链；中英同步。
+
+## [1.20.0] - 2026-09-03
+
+> **升级提示（仅影响 `mcp` extra）**：`mcp` 依赖的**下界**从 `1.0.0` 提到 `2.1.0`
+> （区间 `mcp>=2.1.0,<3.0.0`）。主推的 `uvx --from boss-agent-cli[mcp] boss-mcp`
+> 每次现解析临时环境，不受影响；受影响的只有「把 `boss-agent-cli[mcp]` 装进一个
+> 还钉着 `mcp<2` 的长期共享环境」这种场景——请一并放开该环境里的 `mcp` 约束。
+> **MCP 线格式与工具集合一字未变**，宿主侧无需任何改动。
+
+### Changed
+- **适配 mcp 2.x Server API（Issue #398），依赖改为 `mcp>=2.1.0,<3.0.0`。** mcp 2.0 移除了
+  `@server.list_tools()` / `@server.call_tool()` 装饰器，改为
+  `add_request_handler(method, params_type, handler)`，且 handler 签名与返回类型一并改变
+  （`(ctx, params)` → `ListToolsResult` / `CallToolResult`）。SSE 与 streamable HTTP 两条传输
+  实现原样保留——本次只做适配，换实现是独立决策。
+  **MCP 线格式一字未变**：`Tool` 的字段名内部从 `inputSchema` 改成 `input_schema`，但 pydantic
+  别名保留，序列化仍输出 `inputSchema`，宿主侧无感知；源码里 71 处构造 kwarg 随之改名（mypy 的
+  pydantic 插件按字段名生成 `__init__`，不认别名）。
+  **上界保留**：上一次声明无上界导致所有全新安装解析到新大版本并崩溃，而 CI 锁着旧版本永远看不到。
 - `CONTRIBUTING.md` / `.en.md` 新增「新增 AI provider」一节，把 provider 的准入与移除写成明规则：
   文档只写可用一次 API 调用证伪的陈述（不接受安全姿态、定价承诺、评级与会静默过期的规模数字）；
   服务商自荐需提供可验证归属（企业域名邮箱或官方公开双向引用，不追溯）；端点连续两个 minor
@@ -25,12 +63,16 @@
   本次不暴露任何 CLI 选项、不新增任何错误码。新增 22 条结构门禁锁定上述性质。
 
 ### Fixed
-- 修复 Bridge 已连接日常浏览器时 `chat` / `chatmsg` 仍先要求 CLI 本地 `wt2` 的问题（#386）。
-  Bridge 连接作为本切片的现有浏览器使用信号，走 `existing-browser` 策略的 Bridge → CDP
-  白名单，不读取本地凭据、不新建 context、不启动或降级到 headless；候选耗尽返回
-  `BROWSER_SESSION_NOT_FOUND` + `boss doctor`，真人浏览器指引放在 `operator_actions`。
-  Bridge 未连接时保留原 httpx、stoken 刷新和限流重试语义；本地无凭据仍返回
-  `AUTH_REQUIRED` + `boss login`。中英文风险边界与能力矩阵同步说明：连接存在不等于已验证目标页登录。
+- **修复设了 SOCKS 系统代理时每一条 httpx 命令都失败**（#412）。全仓四处 `httpx.Client`
+  都用默认 `trust_env=True`，即刻意尊重用户的系统代理；但 httpx 只有装了 `socksio` 才支持
+  `socks5://` scheme，否则在**构造 client 时**就抛 `ImportError`。于是设了
+  `ALL_PROXY=socks5://...` 的用户，`boss status` / `detail` / `favorites` 等每一条只读命令
+  都会失败——而那个 ImportError 被 `display.handle_auth_errors` 的兜底转成
+  `NETWORK_ERROR` + `recovery_action="重试"`，错误码与恢复动作双错，且这是个永远不会
+  因重试而改变的本地环境问题。依赖改为 `httpx[socks]`（拉 `socksio`，35KB、纯 Python、
+  零传递依赖），让代理**能用**而不是失败得好看。
+  CI runner 环境干净、没有代理变量，这条路径在门禁上永远是绿的，故补
+  `tests/test_system_proxy.py` 显式注入代理环境变量把它变成可观测的。
 - `boss ai config` 查看与写入现在都回显 `resolved_base_url`（解析后真正生效的端点）。此前查看模式
   直出 `load_config()`，用户只设 `--provider` 时 `ai_base_url` 为空，实际地址来自
   `PROVIDER_BASE_URLS` 查表却从不显示；而 `--provider` 没有 `click.Choice` 校验（自由字符串），
